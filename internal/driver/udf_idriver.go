@@ -34,7 +34,7 @@ func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData)
 		singleTransport = transport.New(o.Flagset)
 	}
 
-	cxt := context.WithValue(nil, "demo", 1)
+	cxt := context.Background()
 	o:=&plugin.Options{}
 	o.Flagset = &GoFlags{}
 	o.HTTPTransport = singleTransport
