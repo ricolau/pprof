@@ -25,27 +25,30 @@ var singleTransport http.RoundTripper
 
 type renderData map[string]string
 
+type RenderOption struct {
+	DiffType     string
+	BaseFilePath string
+}
 
-func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData) (func(w http.ResponseWriter, req *http.Request), error){
+func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData, ro RenderOption) (func(w http.ResponseWriter, req *http.Request), error) {
 
-	if  singleTransport ==nil{
-		o:=&plugin.Options{}
+	if singleTransport == nil {
+		o := &plugin.Options{}
 		o.Flagset = &GoFlags{}
 		singleTransport = transport.New(o.Flagset)
 	}
 
 	cxt := context.Background()
-	o:=&plugin.Options{}
+	o := &plugin.Options{}
 	o.Flagset = &GoFlags{}
 	o.HTTPTransport = singleTransport
 
 	o = setDefaults(o)
 	//src, cmd, err := initSource(cxt, filepath, o)
-	src, _, _ := initSource(cxt, filepath, o)
+	src, _, _ := initSource(cxt, filepath, o, ro)
 	p, err := fetchProfiles(src, o)
 
 	ui, err := makeWebInterface2(p, o)
-
 
 	if err != nil {
 		return nil, err
@@ -63,8 +66,7 @@ func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData)
 
 	ui.renderData = renderData
 
-
-	switch(renderType){
+	switch renderType {
 	case "top":
 		return ui.top, nil
 		break
@@ -92,7 +94,6 @@ func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData)
 	default:
 		return ui.dot, nil
 		break
-
 
 	}
 	return nil, errors.New("bad renderType:" + renderType)
@@ -131,16 +132,9 @@ func GetRenderFunc(filepath string, renderType string, renderData UdfRenderData)
 	//}
 	//return server(args)
 
-
-
-
 }
 
-
-
-
-
-func initRenderArgs(rd UdfRenderData) webArgs2{
+func initRenderArgs(rd UdfRenderData) webArgs2 {
 	wd := webArgs2{}
 	wd.Topurl = rd.Topurl
 	wd.Graphurl = rd.Graphurl
@@ -186,7 +180,7 @@ func (ui *webInterface2) dot(w http.ResponseWriter, req *http.Request) {
 	wd.HTMLBody = template.HTML(string(svg))
 	wd.Nodes = nodes
 
-	fmt.Println(wd.Peekurl,1111)
+	fmt.Println(wd.Peekurl, 1111)
 	ui.render(w, req, "graph", rpt, errList, legend, wd)
 }
 
@@ -206,7 +200,7 @@ func (ui *webInterface2) top(w http.ResponseWriter, req *http.Request) {
 	wd := initRenderArgs(ui.renderData)
 	wd.Top = top
 	wd.Nodes = nodes
-	ui.render(w, req, "top", rpt, errList, legend, wd )
+	ui.render(w, req, "top", rpt, errList, legend, wd)
 }
 
 // disasm generates a web page containing disassembly.
@@ -227,7 +221,7 @@ func (ui *webInterface2) disasm(w http.ResponseWriter, req *http.Request) {
 	legend := report.ProfileLabels(rpt)
 	wd := initRenderArgs(ui.renderData)
 	wd.TextBody = out.String()
-	ui.render(w, req, "plaintext", rpt, errList, legend, wd )
+	ui.render(w, req, "plaintext", rpt, errList, legend, wd)
 
 }
 
@@ -252,7 +246,7 @@ func (ui *webInterface2) source(w http.ResponseWriter, req *http.Request) {
 
 	wd := initRenderArgs(ui.renderData)
 	wd.HTMLBody = template.HTML(body.String())
-	ui.render(w, req, "sourcelisting", rpt, errList, legend, wd )
+	ui.render(w, req, "sourcelisting", rpt, errList, legend, wd)
 }
 
 // peek generates a web page listing callers/callers.
@@ -276,12 +270,9 @@ func (ui *webInterface2) peek(w http.ResponseWriter, req *http.Request) {
 
 	wd := initRenderArgs(ui.renderData)
 	wd.TextBody = out.String()
-	ui.render(w, req, "plaintext", rpt, errList, legend, wd )
+	ui.render(w, req, "plaintext", rpt, errList, legend, wd)
 
 }
-
-
-
 
 // flamegraph generates a web page containing a flamegraph.
 func (ui *webInterface2) flamegraph(w http.ResponseWriter, req *http.Request) {
@@ -350,23 +341,20 @@ func (ui *webInterface2) flamegraph(w http.ResponseWriter, req *http.Request) {
 	wd := initRenderArgs(ui.renderData)
 	wd.FlameGraph = template.JS(b)
 	wd.Nodes = nodeArr
-	ui.render(w, req, "flamegraph", rpt, errList, config.Labels, wd )
+	ui.render(w, req, "flamegraph", rpt, errList, config.Labels, wd)
 
 }
 
-
-
-
-type UdfRenderData struct{
-	Topurl string
-	Graphurl string
+type UdfRenderData struct {
+	Topurl        string
+	Graphurl      string
 	Flamegraphurl string
-	Peekurl string
-	Sourceurl string
-	Disasmurl string
-	Sampleurl string
-	Cpuurl string
-	Downloadurl string
+	Peekurl       string
+	Sourceurl     string
+	Disasmurl     string
+	Sampleurl     string
+	Cpuurl        string
+	Downloadurl   string
 }
 
 // webArgs contains arguments passed to templates in webhtml.go.
@@ -385,6 +373,7 @@ type webArgs2 struct {
 	Configs     []configMenuEntry
 	UdfRenderData
 }
+
 // render generates html using the named template based on the contents of data.
 func (ui *webInterface2) render(w http.ResponseWriter, req *http.Request, tmpl string,
 	rpt *report.Report, errList, legend []string, data webArgs2) {
@@ -415,9 +404,8 @@ type webInterface2 struct {
 	help         map[string]string
 	templates    *template.Template
 	settingsFile string
-	renderData UdfRenderData
+	renderData   UdfRenderData
 }
-
 
 func makeWebInterface2(p *profile.Profile, opt *plugin.Options) (*webInterface2, error) {
 	settingsFile, err := settingsFileName()
@@ -436,16 +424,20 @@ func makeWebInterface2(p *profile.Profile, opt *plugin.Options) (*webInterface2,
 	}, nil
 }
 
-
-
-func initSource(c context.Context, filepath string, o *plugin.Options) (*source, []string, error) {
+func initSource(c context.Context, filepath string, o *plugin.Options, ro RenderOption) (*source, []string, error) {
 	//flag := o.Flagset
 	// Comparisons.
 
 	ds1 := []*string{}
+	if ro.DiffType == "diff-base" && ro.BaseFilePath != "" {
+		ds1 = append(ds1, &ro.BaseFilePath)
+	}
 	flagDiffBase := &ds1
 
 	ds2 := []*string{}
+	if ro.DiffType == "base" && ro.BaseFilePath != "" {
+		ds2 = append(ds2, &ro.BaseFilePath)
+	}
 	flagBase := &ds2
 	// Source options.
 
@@ -460,17 +452,17 @@ func initSource(c context.Context, filepath string, o *plugin.Options) (*source,
 	es2 := ""
 	flagAddComment := &es2
 	// CPU profile options
-	ei2 :=-1
+	ei2 := -1
 	flagSeconds := &ei2
 	// Heap profile options
 
 	df4 := false
 	flagInUseSpace := &df4
 
-	df5 :=false
+	df5 := false
 	flagInUseObjects := &df5
 
-	df6:=false
+	df6 := false
 	flagAllocSpace := &df6
 
 	df7 := false
@@ -480,7 +472,7 @@ func initSource(c context.Context, filepath string, o *plugin.Options) (*source,
 	defaultFalse := false
 	flagTotalDelay := &defaultFalse
 
-	df3 :=false
+	df3 := false
 	flagContentions := &df3
 
 	defaultFalse2 := false
@@ -510,8 +502,6 @@ func initSource(c context.Context, filepath string, o *plugin.Options) (*source,
 			flagCommands[name] = &df
 		}
 	}
-
-
 
 	var execName string
 	// Recognize first argument as an executable or buildid override.
