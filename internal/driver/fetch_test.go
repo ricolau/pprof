@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"net/http"
@@ -52,13 +51,16 @@ func TestSymbolizationPath(t *testing.T) {
 	saveHome := os.Getenv(homeEnv())
 	savePath := os.Getenv("PPROF_BINARY_PATH")
 
-	tempdir, err := ioutil.TempDir("", "home")
+	tempdir, err := os.MkdirTemp("", "home")
 	if err != nil {
 		t.Fatal("creating temp dir: ", err)
 	}
 	defer os.RemoveAll(tempdir)
 	os.MkdirAll(filepath.Join(tempdir, "pprof", "binaries", "abcde10001"), 0700)
 	os.Create(filepath.Join(tempdir, "pprof", "binaries", "abcde10001", "binary"))
+
+	os.MkdirAll(filepath.Join(tempdir, "pprof", "binaries", "fg"), 0700)
+	os.Create(filepath.Join(tempdir, "pprof", "binaries", "fg", "hij10001.debug"))
 
 	obj := testObj{tempdir}
 	os.Setenv(homeEnv(), tempdir)
@@ -72,6 +74,7 @@ func TestSymbolizationPath(t *testing.T) {
 		{"", "/prod/path/binary", "abcde10001", filepath.Join(tempdir, "pprof/binaries/abcde10001/binary"), 0},
 		{"/alternate/architecture", "/usr/bin/binary", "", "/alternate/architecture/binary", 0},
 		{"/alternate/architecture", "/usr/bin/binary", "abcde10001", "/alternate/architecture/binary", 0},
+		{"", "", "fghij10001", filepath.Join(tempdir, "pprof/binaries/fg/hij10001.debug"), 0},
 		{"/nowhere:/alternate/architecture", "/usr/bin/binary", "fedcb10000", "/usr/bin/binary", 1},
 		{"/nowhere:/alternate/architecture", "/usr/bin/binary", "abcde10002", "/usr/bin/binary", 1},
 	} {
@@ -123,23 +126,31 @@ func TestCollectMappingSources(t *testing.T) {
 
 func TestUnsourceMappings(t *testing.T) {
 	for _, tc := range []struct {
-		file, buildID, want string
+		os, file, buildID, want string
 	}{
-		{"/usr/bin/binary", "buildId", "/usr/bin/binary"},
-		{"http://example.com", "", ""},
+		{"any", "/usr/bin/binary", "buildId", "/usr/bin/binary"},
+		{"any", "http://example.com", "", ""},
+		{"windows", `C:\example.exe`, "", `C:\example.exe`},
+		{"windows", `c:/example.exe`, "", `c:/example.exe`},
 	} {
-		p := &profile.Profile{
-			Mapping: []*profile.Mapping{
-				{
-					File:    tc.file,
-					BuildID: tc.buildID,
+		t.Run(tc.file+"-"+tc.os, func(t *testing.T) {
+			if tc.os != "any" && tc.os != runtime.GOOS {
+				t.Skipf("%s only test", tc.os)
+			}
+
+			p := &profile.Profile{
+				Mapping: []*profile.Mapping{
+					{
+						File:    tc.file,
+						BuildID: tc.buildID,
+					},
 				},
-			},
-		}
-		unsourceMappings(p)
-		if got := p.Mapping[0].File; got != tc.want {
-			t.Errorf("%s:%s, want %s, got %s", tc.file, tc.buildID, tc.want, got)
-		}
+			}
+			unsourceMappings(p)
+			if got := p.Mapping[0].File; got != tc.want {
+				t.Errorf("%s:%s, want %s, got %s", tc.file, tc.buildID, tc.want, got)
+			}
+		})
 	}
 }
 
@@ -147,7 +158,7 @@ type testObj struct {
 	home string
 }
 
-func (o testObj) Open(file string, start, limit, offset uint64) (plugin.ObjFile, error) {
+func (o testObj) Open(file string, start, limit, offset uint64, relocationSymbol string) (plugin.ObjFile, error) {
 	switch file {
 	case "/alternate/architecture/binary":
 		return testFile{file, "abcde10001"}, nil
@@ -155,6 +166,8 @@ func (o testObj) Open(file string, start, limit, offset uint64) (plugin.ObjFile,
 		return testFile{file, "fedcb10000"}, nil
 	case filepath.Join(o.home, "pprof/binaries/abcde10001/binary"):
 		return testFile{file, "abcde10001"}, nil
+	case filepath.Join(o.home, "pprof/binaries/fg/hij10001.debug"):
+		return testFile{file, "fghij10001"}, nil
 	}
 	return nil, fmt.Errorf("not found: %s", file)
 }
@@ -179,12 +192,28 @@ func TestFetch(t *testing.T) {
 	type testcase struct {
 		source, execName string
 	}
-
-	for _, tc := range []testcase{
+	ts := []testcase{
 		{path + "go.crc32.cpu", ""},
 		{path + "go.nomappings.crash", "/bin/gotest.exe"},
 		{"http://localhost/profile?file=cppbench.cpu", ""},
-	} {
+	}
+	// Test that paths with a colon character are recognized as file paths
+	// if the file exists, rather than as a URL. We have to skip this test
+	// on Windows since the colon char is not allowed in Windows paths.
+	if runtime.GOOS != "windows" {
+		src := filepath.Join(path, "go.crc32.cpu")
+		dst := filepath.Join(t.TempDir(), "go.crc32.cpu_2023-11-11_01:02:03")
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read src file %s failed: %#v", src, err)
+		}
+		err = os.WriteFile(dst, data, 0644)
+		if err != nil {
+			t.Fatalf("create dst file %s failed: %#v", dst, err)
+		}
+		ts = append(ts, testcase{dst, ""})
+	}
+	for _, tc := range ts {
 		p, _, _, err := grabProfile(&source{ExecName: tc.execName}, tc.source, nil, testObj{}, &proftest.TestUI{T: t}, &httpTransport{})
 		if err != nil {
 			t.Fatalf("%s: %s", tc.source, err)
@@ -214,13 +243,14 @@ func TestFetchWithBase(t *testing.T) {
 
 	const path = "testdata/"
 	type testcase struct {
-		desc         string
-		sources      []string
-		bases        []string
-		diffBases    []string
-		normalize    bool
-		wantSamples  []WantSample
-		wantErrorMsg string
+		desc              string
+		sources           []string
+		bases             []string
+		diffBases         []string
+		normalize         bool
+		wantSamples       []WantSample
+		wantParseErrorMsg string
+		wantFetchErrorMsg string
 	}
 
 	testcases := []testcase{
@@ -232,6 +262,7 @@ func TestFetchWithBase(t *testing.T) {
 			false,
 			nil,
 			"",
+			"",
 		},
 		{
 			"not normalized base is same as source",
@@ -240,6 +271,7 @@ func TestFetchWithBase(t *testing.T) {
 			nil,
 			false,
 			nil,
+			"",
 			"",
 		},
 		{
@@ -275,6 +307,7 @@ func TestFetchWithBase(t *testing.T) {
 				},
 			},
 			"",
+			"",
 		},
 		{
 			"not normalized, different base and source",
@@ -309,6 +342,7 @@ func TestFetchWithBase(t *testing.T) {
 				},
 			},
 			"",
+			"",
 		},
 		{
 			"normalized base is same as source",
@@ -318,6 +352,7 @@ func TestFetchWithBase(t *testing.T) {
 			true,
 			nil,
 			"",
+			"",
 		},
 		{
 			"normalized single source, multiple base (all profiles same)",
@@ -326,6 +361,7 @@ func TestFetchWithBase(t *testing.T) {
 			nil,
 			true,
 			nil,
+			"",
 			"",
 		},
 		{
@@ -360,6 +396,7 @@ func TestFetchWithBase(t *testing.T) {
 					labels: map[string][]string{},
 				},
 			},
+			"",
 			"",
 		},
 		{
@@ -419,6 +456,7 @@ func TestFetchWithBase(t *testing.T) {
 				},
 			},
 			"",
+			"",
 		},
 		{
 			"diff_base and base both specified",
@@ -428,6 +466,27 @@ func TestFetchWithBase(t *testing.T) {
 			false,
 			nil,
 			"-base and -diff_base flags cannot both be specified",
+			"",
+		},
+		{
+			"input profiles with different sample types (non empty intersection)",
+			[]string{path + "cppbench.cpu", path + "cppbench.cpu_no_samples_type"},
+			[]string{path + "cppbench.cpu", path + "cppbench.cpu_no_samples_type"},
+			nil,
+			false,
+			nil,
+			"",
+			"",
+		},
+		{
+			"input profiles with different sample types (empty intersection)",
+			[]string{path + "cppbench.cpu", path + "cppbench.contention"},
+			[]string{path + "cppbench.cpu", path + "cppbench.contention"},
+			nil,
+			false,
+			nil,
+			"",
+			"problem fetching source profiles: profiles have empty common sample type list",
 		},
 	}
 
@@ -452,13 +511,13 @@ func TestFetchWithBase(t *testing.T) {
 			})
 			src, _, err := parseFlags(o)
 
-			if tc.wantErrorMsg != "" {
+			if tc.wantParseErrorMsg != "" {
 				if err == nil {
-					t.Fatalf("got nil, want error %q", tc.wantErrorMsg)
+					t.Fatalf("got nil, want error %q", tc.wantParseErrorMsg)
 				}
 
-				if gotErrMsg := err.Error(); gotErrMsg != tc.wantErrorMsg {
-					t.Fatalf("got error %q, want error %q", gotErrMsg, tc.wantErrorMsg)
+				if gotErrMsg := err.Error(); gotErrMsg != tc.wantParseErrorMsg {
+					t.Fatalf("got error %q, want error %q", gotErrMsg, tc.wantParseErrorMsg)
 				}
 				return
 			}
@@ -468,6 +527,17 @@ func TestFetchWithBase(t *testing.T) {
 			}
 
 			p, err := fetchProfiles(src, o)
+
+			if tc.wantFetchErrorMsg != "" {
+				if err == nil {
+					t.Fatalf("got nil, want error %q", tc.wantFetchErrorMsg)
+				}
+
+				if gotErrMsg := err.Error(); gotErrMsg != tc.wantFetchErrorMsg {
+					t.Fatalf("got error %q, want error %q", gotErrMsg, tc.wantFetchErrorMsg)
+				}
+				return
+			}
 
 			if err != nil {
 				t.Fatalf("got error %q, want no error", err)
@@ -530,7 +600,7 @@ func TestHTTPSInsecure(t *testing.T) {
 		t.Skip("test assumes tcp available")
 	}
 	saveHome := os.Getenv(homeEnv())
-	tempdir, err := ioutil.TempDir("", "home")
+	tempdir, err := os.MkdirTemp("", "home")
 	if err != nil {
 		t.Fatal("creating temp dir: ", err)
 	}
@@ -564,7 +634,7 @@ func TestHTTPSInsecure(t *testing.T) {
 	}()
 	defer l.Close()
 
-	outputTempFile, err := ioutil.TempFile("", "profile_output")
+	outputTempFile, err := os.CreateTemp("", "profile_output")
 	if err != nil {
 		t.Fatalf("Failed to create tempfile: %v", err)
 	}
@@ -603,7 +673,7 @@ func TestHTTPSWithServerCertFetch(t *testing.T) {
 		t.Skip("test assumes tcp available")
 	}
 	saveHome := os.Getenv(homeEnv())
-	tempdir, err := ioutil.TempDir("", "home")
+	tempdir, err := os.MkdirTemp("", "home")
 	if err != nil {
 		t.Fatal("creating temp dir: ", err)
 	}
@@ -645,7 +715,7 @@ func TestHTTPSWithServerCertFetch(t *testing.T) {
 	}()
 	defer l.Close()
 
-	outputTempFile, err := ioutil.TempFile("", "profile_output")
+	outputTempFile, err := os.CreateTemp("", "profile_output")
 	if err != nil {
 		t.Fatalf("Failed to create tempfile: %v", err)
 	}
@@ -665,7 +735,7 @@ func TestHTTPSWithServerCertFetch(t *testing.T) {
 		Symbolize: "remote",
 	}
 
-	certTempFile, err := ioutil.TempFile("", "cert_output")
+	certTempFile, err := os.CreateTemp("", "cert_output")
 	if err != nil {
 		t.Errorf("cannot create cert tempfile: %v", err)
 	}
@@ -673,7 +743,7 @@ func TestHTTPSWithServerCertFetch(t *testing.T) {
 	defer certTempFile.Close()
 	certTempFile.Write(certBytes)
 
-	keyTempFile, err := ioutil.TempFile("", "key_output")
+	keyTempFile, err := os.CreateTemp("", "key_output")
 	if err != nil {
 		t.Errorf("cannot create key tempfile: %v", err)
 	}

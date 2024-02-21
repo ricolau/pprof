@@ -1,6 +1,6 @@
 [![Github Action CI](https://github.com/google/pprof/workflows/ci/badge.svg)](https://github.com/google/pprof/actions)
-[![Travis CI](https://travis-ci.org/google/pprof.svg?branch=master)](https://travis-ci.org/google/pprof)
 [![Codecov](https://codecov.io/gh/google/pprof/graph/badge.svg)](https://codecov.io/gh/google/pprof)
+[![Go Reference](https://pkg.go.dev/badge/github.com/google/pprof/profile.svg)](https://pkg.go.dev/github.com/google/pprof/profile)
 
 # Introduction
 
@@ -29,19 +29,17 @@ them through the use of the native binutils tools (addr2line and nm).
 Prerequisites:
 
 - Go development kit of a [supported version](https://golang.org/doc/devel/release.html#policy).
-  Follow [these instructions](http://golang.org/doc/code.html) to install the 
-  go tool and set up GOPATH.
+  Follow [these instructions](http://golang.org/doc/code.html) to prepare
+  the environment.
 
 - Graphviz: http://www.graphviz.org/
   Optional, used to generate graphic visualizations of profiles
 
-To build and install it, use the `go get` tool.
+To build and install it:
 
-    go get -u github.com/google/pprof
+    go install github.com/google/pprof@latest
 
-Remember to set GOPATH to the directory where you want pprof to be
-installed.  The binary will be in `$GOPATH/bin` and the sources under
-`$GOPATH/src/github.com/google/pprof`.
+The binary will be installed `$GOPATH/bin` (`$HOME/go/bin` by default).
 
 # Basic usage
 

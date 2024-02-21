@@ -109,8 +109,10 @@ type MappingSources map[string][]struct {
 type ObjTool interface {
 	// Open opens the named object file. If the object is a shared
 	// library, start/limit/offset are the addresses where it is mapped
-	// into memory in the address space being inspected.
-	Open(file string, start, limit, offset uint64) (ObjFile, error)
+	// into memory in the address space being inspected. If the object
+	// is a linux kernel, relocationSymbol is the name of the symbol
+	// corresponding to the start address.
+	Open(file string, start, limit, offset uint64, relocationSymbol string) (ObjFile, error)
 
 	// Disasm disassembles the named object file, starting at
 	// the start address and stopping at (before) the end address.
@@ -155,11 +157,12 @@ type ObjFile interface {
 	Close() error
 }
 
-// A Frame describes a single line in a source file.
+// A Frame describes a location in a single line in a source file.
 type Frame struct {
-	Func string // name of function
-	File string // source file name
-	Line int    // line in file
+	Func   string // name of function
+	File   string // source file name
+	Line   int    // line in file
+	Column int    // column in line (if available)
 }
 
 // A Sym describes a single symbol in an object file.

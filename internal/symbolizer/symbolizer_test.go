@@ -242,28 +242,144 @@ func checkSymbolizedLocation(a uint64, got []profile.Line) error {
 		if g.Line != int64(w.Line) {
 			return fmt.Errorf("want lineno: %d, got %d", w.Line, g.Line)
 		}
+		if g.Column != int64(w.Column) {
+			return fmt.Errorf("want columnno: %d, got %d", w.Column, g.Column)
+		}
 	}
 	return nil
 }
 
 var mockAddresses = map[uint64][]plugin.Frame{
-	1000: {frame("fun11", "file11.src", 10)},
-	2000: {frame("fun21", "file21.src", 20), frame("fun22", "file22.src", 20)},
-	3000: {frame("fun31", "file31.src", 30), frame("fun32", "file32.src", 30), frame("fun33", "file33.src", 30)},
-	4000: {frame("fun41", "file41.src", 40), frame("fun42", "file42.src", 40), frame("fun43", "file43.src", 40), frame("fun44", "file44.src", 40)},
-	5000: {frame("fun51", "file51.src", 50), frame("fun52", "file52.src", 50), frame("fun53", "file53.src", 50), frame("fun54", "file54.src", 50), frame("fun55", "file55.src", 50)},
+	1000: {frame("fun11", "file11.src", 10, 1)},
+	2000: {frame("fun21", "file21.src", 20, 2), frame("fun22", "file22.src", 20, 2)},
+	3000: {frame("fun31", "file31.src", 30, 3), frame("fun32", "file32.src", 30, 3), frame("fun33", "file33.src", 30, 3)},
+	4000: {frame("fun41", "file41.src", 40, 4), frame("fun42", "file42.src", 40, 4), frame("fun43", "file43.src", 40, 4), frame("fun44", "file44.src", 40, 4)},
+	5000: {frame("fun51", "file51.src", 50, 5), frame("fun52", "file52.src", 50, 5), frame("fun53", "file53.src", 50, 5), frame("fun54", "file54.src", 50, 5), frame("fun55", "file55.src", 50, 5)},
 }
 
-func frame(fname, file string, line int) plugin.Frame {
+func frame(fname, file string, line int, column int) plugin.Frame {
 	return plugin.Frame{
-		Func: fname,
-		File: file,
-		Line: line}
+		Func:   fname,
+		File:   file,
+		Line:   line,
+		Column: column}
+}
+
+func TestDemangleSingleFunction(t *testing.T) {
+	// All tests with default mode.
+	demanglerMode := ""
+	options := demanglerModeToOptions(demanglerMode)
+
+	cases := []struct {
+		symbol string
+		want   string
+	}{
+		{
+			// Trivial C symbol.
+			symbol: "printf",
+			want:   "printf",
+		},
+		{
+			// foo::bar(int)
+			symbol: "_ZN3foo3barEi",
+			want:   "foo::bar",
+		},
+		{
+			// Already demangled.
+			symbol: "foo::bar(int)",
+			want:   "foo::bar",
+		},
+		{
+			// int foo::baz<double>(double)
+			symbol: "_ZN3foo3bazIdEEiT",
+			want:   "foo::baz",
+		},
+		{
+			// Already demangled.
+			//
+			// TODO: The demangled form of this is actually
+			// 'int foo::baz<double>(double)', but our heuristic
+			// can't strip the return type. Should it be able to?
+			symbol: "foo::baz<double>(double)",
+			want:   "foo::baz",
+		},
+		{
+			// operator delete[](void*)
+			symbol: "_ZdaPv",
+			want:   "operator delete[]",
+		},
+		{
+			// Already demangled.
+			symbol: "operator delete[](void*)",
+			want:   "operator delete[]",
+		},
+		{
+			// bar(int (*) [5])
+			symbol: "_Z3barPA5_i",
+			want:   "bar",
+		},
+		{
+			// Already demangled.
+			symbol: "bar(int (*) [5])",
+			want:   "bar",
+		},
+		// Java symbols, do not demangle.
+		{
+			symbol: "java.lang.Float.parseFloat",
+			want:   "java.lang.Float.parseFloat",
+		},
+		{
+			symbol: "java.lang.Float.<init>",
+			want:   "java.lang.Float.<init>",
+		},
+		// Go symbols, do not demangle.
+		{
+			symbol: "example.com/foo.Bar",
+			want:   "example.com/foo.Bar",
+		},
+		{
+			symbol: "example.com/foo.(*Bar).Bat",
+			want:   "example.com/foo.(*Bar).Bat",
+		},
+		{
+			// Method on type with type parameters, as reported by
+			// Go pprof profiles (simplified symbol name).
+			symbol: "example.com/foo.(*Bar[...]).Bat",
+			want:   "example.com/foo.(*Bar[...]).Bat",
+		},
+		{
+			// Method on type with type parameters, as reported by
+			// perf profiles (actual symbol name).
+			symbol: "example.com/foo.(*Bar[go.shape.string_0,go.shape.int_1]).Bat",
+			want:   "example.com/foo.(*Bar[go.shape.string_0,go.shape.int_1]).Bat",
+		},
+		{
+			// Function with type parameters, as reported by Go
+			// pprof profiles (simplified symbol name).
+			symbol: "example.com/foo.Bar[...]",
+			want:   "example.com/foo.Bar[...]",
+		},
+		{
+			// Function with type parameters, as reported by perf
+			// profiles (actual symbol name).
+			symbol: "example.com/foo.Bar[go.shape.string_0,go.shape.int_1]",
+			want:   "example.com/foo.Bar[go.shape.string_0,go.shape.int_1]",
+		},
+	}
+	for _, tc := range cases {
+		fn := &profile.Function{
+			SystemName: tc.symbol,
+		}
+		demangleSingleFunction(fn, options)
+		if fn.Name != tc.want {
+			t.Errorf("demangleSingleFunction(%s) got %s want %s", tc.symbol, fn.Name, tc.want)
+		}
+	}
 }
 
 type mockObjTool struct{}
 
-func (mockObjTool) Open(file string, start, limit, offset uint64) (plugin.ObjFile, error) {
+func (mockObjTool) Open(file string, start, limit, offset uint64, relocationSymbol string) (plugin.ObjFile, error) {
 	return mockObjFile{frames: mockAddresses}, nil
 }
 

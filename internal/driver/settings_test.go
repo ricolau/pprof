@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 // and the name of the settings file. The caller must delete the directory when
 // done.
 func settingsDirAndFile(t *testing.T) (string, string) {
-	tmpDir, err := ioutil.TempDir("", "pprof_settings_test")
+	tmpDir, err := os.MkdirTemp("", "pprof_settings_test")
 	if err != nil {
 		t.Fatalf("error creating temporary directory: %v", err)
 	}
@@ -87,6 +86,7 @@ func TestParseConfig(t *testing.T) {
 		Sort:                "cum",
 		Granularity:         "functions",
 		NoInlines:           true,
+		ShowColumns:         true,
 	}
 	url, changed := cfg.makeURL(url.URL{})
 	if !changed {
@@ -135,9 +135,9 @@ func TestConfigMenu(t *testing.T) {
 	pageURL, _ := url.Parse("/top?f=foo")
 	menu := configMenu(fname, *pageURL)
 	want := []configMenuEntry{
-		{Name: "Default", URL: "/top", Current: false, UserConfig: false},
-		{Name: "A", URL: "/top?f=foo", Current: true, UserConfig: true},
-		{Name: "B", URL: "/top?f=bar", Current: false, UserConfig: true},
+		{Name: "Default", URL: "?", Current: false, UserConfig: false},
+		{Name: "A", URL: "?f=foo", Current: true, UserConfig: true},
+		{Name: "B", URL: "?f=bar", Current: false, UserConfig: true},
 	}
 	if !reflect.DeepEqual(menu, want) {
 		t.Errorf("ConfigMenu returned %v; want %v", menu, want)

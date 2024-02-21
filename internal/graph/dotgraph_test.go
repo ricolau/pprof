@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -150,6 +150,19 @@ func TestComposeWithNamesThatNeedEscaping(t *testing.T) {
 	compareGraphs(t, buf.Bytes(), "compose7.dot")
 }
 
+func TestComposeWithCommentsWithNewlines(t *testing.T) {
+	g := baseGraph()
+	a, c := baseAttrsAndConfig()
+	// comments that could be added with the -add_comment command line tool
+	// the first label is used as the dot "node name"; the others are escaped as labels
+	c.Labels = []string{"comment line 1\ncomment line 2 \"unterminated double quote", `second comment "double quote"`}
+
+	var buf bytes.Buffer
+	ComposeDot(&buf, g, a, c)
+
+	compareGraphs(t, buf.Bytes(), "compose9.dot")
+}
+
 func baseGraph() *Graph {
 	src := &Node{
 		Info:        NodeInfo{Name: "src"},
@@ -201,7 +214,7 @@ func baseAttrsAndConfig() (*DotAttributes, *DotConfig) {
 
 func compareGraphs(t *testing.T, got []byte, wantFile string) {
 	wantFile = filepath.Join("testdata", wantFile)
-	want, err := ioutil.ReadFile(wantFile)
+	want, err := os.ReadFile(wantFile)
 	if err != nil {
 		t.Fatalf("error reading test file %s: %v", wantFile, err)
 	}
@@ -213,7 +226,7 @@ func compareGraphs(t *testing.T, got []byte, wantFile string) {
 		}
 		t.Errorf("Compose incorrectly wrote %s", string(d))
 		if *updateFlag {
-			err := ioutil.WriteFile(wantFile, got, 0644)
+			err := os.WriteFile(wantFile, got, 0644)
 			if err != nil {
 				t.Errorf("failed to update the golden file %q: %v", wantFile, err)
 			}

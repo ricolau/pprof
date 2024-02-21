@@ -20,15 +20,14 @@ set -x
 MODE=atomic
 echo "mode: $MODE" > coverage.txt
 
-# All packages.
-PKG=$(go list ./...)
-
-staticcheck $PKG
+if [ "$RUN_STATICCHECK" != "false" ]; then
+  staticcheck ./...
+fi
 
 # Packages that have any tests.
 PKG=$(go list -f '{{if .TestGoFiles}} {{.ImportPath}} {{end}}' ./...)
 
-go test -v $PKG
+go test $PKG
 
 for d in $PKG; do
   go test -race -coverprofile=profile.out -covermode=$MODE $d
@@ -38,3 +37,9 @@ for d in $PKG; do
   fi
 done
 
+go vet -all ./...
+if [ "$RUN_GOLANGCI_LINTER" != "false" ];  then
+  golangci-lint run -D errcheck --timeout=3m ./...  # TODO: Enable errcheck back.
+fi
+
+gofmt -s -d .

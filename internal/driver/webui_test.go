@@ -16,7 +16,7 @@ package driver
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -32,12 +32,10 @@ import (
 	"github.com/google/pprof/profile"
 )
 
-func TestWebInterface(t *testing.T) {
+func makeTestServer(t testing.TB, prof *profile.Profile) *httptest.Server {
 	if runtime.GOOS == "nacl" || runtime.GOOS == "js" {
 		t.Skip("test assumes tcp available")
 	}
-
-	prof := makeFakeProfile()
 
 	// Custom http server creator
 	var server *httptest.Server
@@ -60,8 +58,16 @@ func TestWebInterface(t *testing.T) {
 		HTTPServer: creator,
 	}, false)
 	<-serverCreated
-	defer server.Close()
 
+	// Close the server when the test is done.
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+func TestWebInterface(t *testing.T) {
+	prof := makeFakeProfile()
+	server := makeTestServer(t, prof)
 	haveDot := false
 	if _, err := exec.LookPath("dot"); err == nil {
 		haveDot = true
@@ -85,20 +91,28 @@ func TestWebInterface(t *testing.T) {
 			[]string{"300ms.*F1", "200ms.*300ms.*F2"}, false},
 		{"/disasm?f=" + url.QueryEscape("F[12]"),
 			[]string{"f1:asm", "f2:asm"}, false},
-		{"/flamegraph", []string{"File: testbin", "\"n\":\"root\"", "\"n\":\"F1\"", "var flamegraph = function", "function hierarchy"}, false},
+		{"/flamegraph", []string{
+			"File: testbin",
+			// Check that interesting frames are included.
+			`\bF1\b`,
+			`\bF2\b`,
+			// Check new view JS is included.
+			`function stackViewer`,
+			// Check new view CSS is included.
+			"#stack-chart {",
+		}, false},
 	}
 	for _, c := range testcases {
 		if c.needDot && !haveDot {
 			t.Log("skipping", c.path, "since dot (graphviz) does not seem to be installed")
 			continue
 		}
-
 		res, err := http.Get(server.URL + c.path)
 		if err != nil {
 			t.Error("could not fetch", c.path, err)
 			continue
 		}
-		data, err := ioutil.ReadAll(res.Body)
+		data, err := io.ReadAll(res.Body)
 		if err != nil {
 			t.Error("could not read response", c.path, err)
 			continue
@@ -127,11 +141,11 @@ func TestWebInterface(t *testing.T) {
 				defer wg.Done()
 				res, err := http.Get(path)
 				if err != nil {
-					t.Error("could not fetch", c.path, err)
+					t.Error("could not fetch", path, err)
 					return
 				}
-				if _, err = ioutil.ReadAll(res.Body); err != nil {
-					t.Error("could not read response", c.path, err)
+				if _, err = io.ReadAll(res.Body); err != nil {
+					t.Error("could not read response", path, err)
 				}
 			}()
 		}
@@ -172,7 +186,7 @@ func (f fakeObj) Symbols(r *regexp.Regexp, addr uint64) ([]*plugin.Sym, error) {
 
 type fakeObjTool struct{}
 
-func (obj fakeObjTool) Open(file string, start, limit, offset uint64) (plugin.ObjFile, error) {
+func (obj fakeObjTool) Open(file string, start, limit, offset uint64, relocationSymbol string) (plugin.ObjFile, error) {
 	return fakeObj{}, nil
 }
 
@@ -284,6 +298,35 @@ func TestIsLocalHost(t *testing.T) {
 		}
 		if !isLocalhost(host) {
 			t.Errorf("host %s from %s not considered local", host, s)
+		}
+	}
+}
+
+func BenchmarkTop(b *testing.B)   { benchmarkURL(b, "/top", false) }
+func BenchmarkFlame(b *testing.B) { benchmarkURL(b, "/flamegraph", false) }
+func BenchmarkDot(b *testing.B)   { benchmarkURL(b, "/", true) }
+
+func benchmarkURL(b *testing.B, path string, needDot bool) {
+	if needDot {
+		if _, err := exec.LookPath("dot"); err != nil {
+			b.Skip("dot not available")
+		}
+	}
+	prof := largeProfile(b)
+	server := makeTestServer(b, prof)
+	url := server.URL + path
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, err := http.Get(url)
+		if err != nil {
+			b.Fatal(err)
+		}
+		data, err := io.ReadAll(res.Body)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if i == 0 && testing.Verbose() {
+			b.Logf("%-12s : %10d bytes", path, len(data))
 		}
 	}
 }

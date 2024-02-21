@@ -17,7 +17,6 @@ package report
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,7 +46,7 @@ func TestWebList(t *testing.T) {
 	}
 	output := buf.String()
 
-	for _, expect := range []string{"func busyLoop", "callq.*mapassign"} {
+	for _, expect := range []string{"func busyLoop", "call.*mapassign"} {
 		if match, _ := regexp.MatchString(expect, output); !match {
 			t.Errorf("weblist output does not contain '%s':\n%s", expect, output)
 		}
@@ -123,7 +122,7 @@ func testSourceMapping(t *testing.T, zeroAddress bool) {
 }
 
 func TestOpenSourceFile(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "")
+	tempdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -195,7 +194,7 @@ func TestOpenSourceFile(t *testing.T) {
 				if err := os.MkdirAll(dir, 0755); err != nil {
 					t.Fatalf("failed to create dir %q: %v", dir, err)
 				}
-				if err := ioutil.WriteFile(path, nil, 0644); err != nil {
+				if err := os.WriteFile(path, nil, 0644); err != nil {
 					t.Fatalf("failed to create file %q: %v", path, err)
 				}
 			}
