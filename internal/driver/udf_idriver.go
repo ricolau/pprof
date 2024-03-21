@@ -303,7 +303,7 @@ func (ui *webInterface2) flamegraph(w http.ResponseWriter, req *http.Request) {
 	wd := initRenderArgs(ui.renderData)
 	wd.Stacks = template.JS(b)
 	wd.Nodes = nodes
-	ui.render(w, req, "flamegraph", rpt, errList, legend, wd)
+	ui.render(w, req, "stacks", rpt, errList, legend, wd)
 
 }
 
